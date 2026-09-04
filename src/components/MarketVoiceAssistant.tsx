@@ -54,7 +54,7 @@ export const MarketVoiceAssistant: React.FC<MarketVoiceAssistantProps> = ({
     {
       id: 'msg-welcome',
       sender: 'bot',
-      text: `Olá! Sou o Assistente de Voz do Robô Prisma IA modo vector otc. Monitoro as linhas de tendência LTA e LTB em tempo real, identificando rompimento de LTB com vela verde (CALL), rompimento de LTA com vela vermelha (PUT) e reversões por retração em ${selectedAsset.label}. Pressione "FALAR NO MICROFONE" para conversar comigo!`,
+      text: `Olá! Sou o Assistente de Inteligência do Robô Prisma IA. Agora opero com a tecnologia Gocharting Power Tick: Active & Inactive Value diretamente nas velas! Analiso desbalanceamento de ordens em tempo real e aplico filtros anti-loss rigorosos (filtrando velas mortas e armadilhas de absorção). Pressione "FALAR NO MICROFONE" para tirar dúvidas!`,
       time: new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(
         new Date()
       ),
@@ -226,21 +226,29 @@ A entrada é disparada no nascimento da próxima vela aos 00 segundos!`;
         return `A vela atual M1 em ${selectedAsset.label} é ${color}. Faltam ${seg} segundos para o término. A confirmação ocorre no fechamento da vela e o gatilho é disparado aos 00 segundos.`;
       }
 
-      // Pergunta sobre a Estratégia / Como funciona
+      // Pergunta sobre a Estratégia / Como funciona / Gocharting
       if (
         q.includes('estratégia') ||
         q.includes('estrategia') ||
         q.includes('como funciona') ||
+        q.includes('gocharting') ||
+        q.includes('active') ||
+        q.includes('inactive') ||
+        q.includes('cluster') ||
+        q.includes('footprint') ||
+        q.includes('filtro') ||
         q.includes('regras') ||
         q.includes('robô') ||
         q.includes('robo')
       ) {
-        return `Estratégia Prisma IA modo vector otc:
-1) Traçado Automático: O robô mapeia canais de tendência traçando LTA e LTB em tempo real.
-2) Rompimento com Fluxo: Vela verde rompendo LTB gera CALL; vela vermelha rompendo LTA gera PUT.
-3) Reversão por Retração: Vela vermelha testando LTA sem romper fecha acima gerando CALL; vela verde testando LTB sem romper fecha abaixo gerando PUT.
-4) Gatilho aos 00s: Entrada imediata na virada da vela.
-5) Proteção Anti-Spam: Intervalo de 5 velas entre operações.`;
+        return `Estratégia Gocharting Active & Inactive Value (Skytex Trading):
+1) Números nas Velas (Footprint Clusters): Números verdes representam compradores ativos e números vermelhos representam vendedores ativos em cada nível de preço.
+2) Desbalanceamento (Imbalance): Quando o volume ativo supera o lado oposto em mais de 1.4x, arma o sinal na direção do fluxo.
+3) Gatilho aos 00s: O robô executa a entrada na exata abertura da próxima vela.
+4) Filtros Anti-Loss (Proteção de Banca):
+   - Filtro de Vela Morta: Bloqueia entradas em velas sem liquidez ativa.
+   - Filtro de Absorção Oculta: Evita armadilhas de reversão (ex: rejeição forte com venda oculta no topo).
+   - Filtro de Imbalance Mínimo: Só permite disparo com dominância comprovada.`;
       }
 
       // Saudações e Ajuda
@@ -254,11 +262,11 @@ A entrada é disparada no nascimento da próxima vela aos 00 segundos!`;
         q.includes('ajuda') ||
         q.includes('quem é você')
       ) {
-        return `Olá! Sou a inteligência de voz do Prisma IA modo vector otc. Monitoro as linhas de LTA e LTB com fluxo e reversão para você pegar as melhores entradas aos 00 segundos!`;
+        return `Olá! Sou a inteligência de voz do Robô Prisma IA. Monitoro o fluxo Gocharting Active & Inactive Value em tempo real com filtros anti-loss para você pegar as melhores entradas aos 00 segundos!`;
       }
 
       // Pergunta geral / Análise da vela atual
-      return `Análise de ${selectedAsset.label}: Gráfico M1 no Prisma IA modo vector otc. Situação: ${metrics.verdict === 'CALL' ? 'Sinal ativo de COMPRA (CALL)' : metrics.verdict === 'PUT' ? 'Sinal ativo de VENDA (PUT)' : 'Monitorando vetores LTA e LTB'}. Taxa do vetor: ${metrics.defensePrice.toFixed(5)}.`;
+      return `Análise de ${selectedAsset.label}: Gráfico M1 com tecnologia Gocharting Footprint Cluster. Monitorando fluxo ativo de compra e venda com filtros de proteção ativados.`;
     },
     [candles, metrics, selectedAsset, secondsToNextCandle]
   );

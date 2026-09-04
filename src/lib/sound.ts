@@ -164,6 +164,31 @@ export function playClickSound() {
   osc.stop(now + 0.05);
 }
 
+/** Scan radar sweep sound when forcing analysis */
+export function playScanSweepSound() {
+  if (!soundEnabled) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(440, now);
+  osc.frequency.exponentialRampToValueAtTime(1760, now + 0.35);
+
+  gain.gain.setValueAtTime(0.02, now);
+  gain.gain.linearRampToValueAtTime(0.18, now + 0.15);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  osc.start(now);
+  osc.stop(now + 0.42);
+}
+
 let activeUtterance: SpeechSynthesisUtterance | null = null;
 
 export function stopSpeaking() {

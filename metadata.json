@@ -1,6 +1,6 @@
 {
   "name": "PRISMA IA - MODO VECTOR OTC",
-  "description": "Terminal operacional Prisma IA modo vector otc com estratégias de LTA e LTB, rompimento de fluxo de velas e reversões por retração com execução aos 00s.",
+  "description": "Terminal operacional PRISMA IA com gráfico Gocharting Active & Inactive Value (Power Tick), números Footprint Cluster nas velas, geração de sinais operacionais e filtros anti-loss.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
