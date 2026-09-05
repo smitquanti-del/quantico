@@ -5,13 +5,15 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  Sparkles,
-  ShieldCheck,
   Activity,
-  Layers,
   Zap,
+  TrendingUp,
+  Layers,
+  Clock,
+  Bell,
+  SlidersHorizontal,
 } from 'lucide-react';
-import { generateCandleClusters, type CandleClusterData } from '@/lib/gochartingCluster';
+import { calculateAutoTrendlines, type ChartStructureResult } from '@/lib/trendlineEngine';
 
 interface CandleChartProps {
   candles: Candle[];
@@ -34,23 +36,37 @@ export function CandleChart({
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Estados de controle e navegação (Zoom e Pan)
-  const [visibleCount, setVisibleCount] = useState<number>(26); // Velas com espaço ideal para clusters
+  const [visibleCount, setVisibleCount] = useState<number>(36); // Velas com espaço perfeito e limpo
   const [panOffset, setPanOffset] = useState<number>(0);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStartX, setDragStartX] = useState<number>(0);
 
-  // Toggles de visualização dos indicadores Gocharting
-  const [showFootprintClusters, setShowFootprintClusters] = useState<boolean>(true);
-  const [showStrategySignals, setShowStrategySignals] = useState<boolean>(true);
+  // Controles de Marcadores Automáticos de Linhas (LTA/LTB, Canais, Níveis)
+  const [showAutoLines, setShowAutoLines] = useState<boolean>(true);
+  const [lineFilter, setLineFilter] = useState<'ALL' | 'TREND' | 'CHANNELS' | 'LEVELS'>('ALL');
+
+  // Relógio regressivo de Purchase Time (00:XX) para o fechamento da vela M1
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(() => {
+    const sec = 60 - (Math.floor(Date.now() / 1000) % 60);
+    return sec === 60 ? 0 : sec;
+  });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const sec = 60 - (Math.floor(Date.now() / 1000) % 60);
+      setSecondsRemaining(sec === 60 ? 0 : sec);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Cotação e dados em tempo real
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
   const [priceChange, setPriceChange] = useState<number>(0);
 
-  // Geração determinística dos clusters Gocharting Active & Inactive Value
-  const candleClusters = useMemo(() => {
-    return generateCandleClusters(candles);
+  // Cálculo memoizado das estruturas de linhas automáticas
+  const structure = useMemo<ChartStructureResult>(() => {
+    return calculateAutoTrendlines(candles);
   }, [candles]);
 
   // Escuta o stream em tempo real SSE
@@ -206,7 +222,6 @@ export function CandleChart({
     const startIdx = Math.max(0, totalCandles - count - safePan);
     const endIdx = Math.min(totalCandles, startIdx + count);
     const visibleCandles = candles.slice(startIdx, endIdx);
-    const visibleClusters = candleClusters.slice(startIdx, endIdx);
 
     if (visibleCandles.length === 0) return;
 
@@ -285,7 +300,7 @@ export function CandleChart({
       ctx.fillText(timeStr, x, mainHeight - 6);
     }
 
-    // ─── 3. VELAS CANDLESTICK COM FOOTPRINT CLUSTERS (GOCHARTING) ─────────────
+    // ─── 3. VELAS CANDLESTICK LIMPAS (M1) ───────────────────────────────────
     visibleCandles.forEach((c, i) => {
       const x = getX(i);
       const isGreen = c.close >= c.open;
@@ -298,7 +313,6 @@ export function CandleChart({
       const bodyH = Math.max(2, Math.abs(closeY - openY));
 
       const candleColor = isGreen ? '#0ecb81' : '#e05338';
-      const cluster = visibleClusters[i];
 
       // 1. Pavio da vela
       ctx.strokeStyle = candleColor;
@@ -312,110 +326,101 @@ export function CandleChart({
       ctx.fillStyle = candleColor;
       const left = Math.round(x - candleWidth / 2);
       ctx.fillRect(left, Math.round(topY), Math.round(candleWidth), Math.round(bodyH));
+    });
 
-      // ─── 3.1 DESENHO DO INDICADOR DE CLUSTER FOOTPRINT (IDÊNTICO À IMAGEM) ───
-      if (showFootprintClusters && cluster) {
-        const fontSize = visibleCount > 38 ? 8 : 9.5;
-        ctx.font = `bold ${fontSize}px "JetBrains Mono", monospace`;
+    // ─── 3.1. LINHAS DE TENDÊNCIA AUTOMÁTICAS (LTA / LTB / CANAIS / NÍVEIS) ──
+    if (showAutoLines && structure.lines.length > 0) {
+      structure.lines.forEach((line) => {
+        // Filtragem por seletor
+        if (lineFilter === 'TREND' && line.type !== 'LTA' && line.type !== 'LTB' && line.type !== 'PULLBACK_MICRO') return;
+        if (lineFilter === 'CHANNELS' && line.type !== 'CHANNEL_TOP' && line.type !== 'CHANNEL_BOTTOM') return;
+        if (lineFilter === 'LEVELS' && line.type !== 'HORIZONTAL_LEVEL') return;
 
-        // A. Valores no topo do pavio superior (Bullish verde / Bearish vermelho)
-        ctx.fillStyle = '#22c55e';
-        ctx.textAlign = 'right';
-        ctx.fillText(`${cluster.topBullishValue}`, x - 2, highY - 14);
+        // Projeta coordenadas X
+        const x1 = (line.startIndex - startIdx) * slotWidth + slotWidth / 2;
+        const x2 = (line.endIndex - startIdx) * slotWidth + slotWidth / 2;
+        const y1 = getY(line.startPrice);
+        const y2 = getY(line.endPrice);
 
-        ctx.fillStyle = '#f43f5e';
-        ctx.textAlign = 'left';
-        ctx.fillText(`${cluster.topBearishValue}`, x + 3, highY - 14);
-
-        // B. Números verticais ao longo do corpo/pavio (Delta / Volume de cada tick)
-        // Posicionados à esquerda (compradores em verde) e à direita (vendedores em vermelho)
-        const halfW = Math.round(candleWidth / 2);
-        cluster.levels.forEach((lvl) => {
-          const lvlY = getY(lvl.price);
-
-          // Volume/Delta Comprador (Verde)
-          ctx.fillStyle = '#22c55e';
-          ctx.textAlign = 'right';
-          ctx.fillText(`${lvl.buyVolume}`, x - halfW - 2, lvlY + 3.5);
-
-          // Volume/Delta Vendedor (Vermelho/Coral)
-          ctx.fillStyle = '#f43f5e';
-          ctx.textAlign = 'left';
-          ctx.fillText(`${lvl.sellVolume}`, x + halfW + 2, lvlY + 3.5);
-        });
-
-        // C. Valores na base do pavio inferior (Bullish verde / Bearish vermelho)
-        ctx.fillStyle = '#22c55e';
-        ctx.textAlign = 'right';
-        ctx.fillText(`${cluster.bottomBullishValue}`, x - 2, lowY + 14);
-
-        ctx.fillStyle = '#f43f5e';
-        ctx.textAlign = 'left';
-        ctx.fillText(`${cluster.bottomBearishValue}`, x + 3, lowY + 14);
-      }
-
-      // ─── 3.2 SINAIS DA ESTRATÉGIA E FILTROS ANTI-LOSS ──────────────────────
-      if (showStrategySignals && cluster) {
-        // Marcador de SINAL (CALL ou PUT aos 00s)
-        if (cluster.verdict === 'CALL') {
-          ctx.save();
-          // Pill verde neon
-          const badgeY = lowY + (showFootprintClusters ? 28 : 12);
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.95)';
-          ctx.roundRect(x - 22, badgeY, 44, 16, 4);
-          ctx.fill();
-          ctx.fillStyle = '#051b11';
-          ctx.font = 'bold 9px "JetBrains Mono", monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('▲ CALL', x, badgeY + 11.5);
-          ctx.restore();
-        } else if (cluster.verdict === 'PUT') {
-          ctx.save();
-          // Pill vermelho neon
-          const badgeY = highY - (showFootprintClusters ? 32 : 16);
-          ctx.fillStyle = 'rgba(244, 63, 94, 0.95)';
-          ctx.roundRect(x - 20, badgeY, 40, 16, 4);
-          ctx.fill();
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 9px "JetBrains Mono", monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('▼ PUT', x, badgeY + 11.5);
-          ctx.restore();
-        } else if (cluster.verdict === 'BLOCKED_LOSS_FILTER') {
-          // Escudo de FILTRO ANTI-LOSS (Mostra que o robô protegeu a banca e não entrou!)
-          ctx.save();
-          const badgeY = isGreen
-            ? highY - (showFootprintClusters ? 30 : 14)
-            : lowY + (showFootprintClusters ? 26 : 12);
-          ctx.fillStyle = 'rgba(245, 158, 11, 0.9)';
-          ctx.roundRect(x - 26, badgeY, 52, 15, 4);
-          ctx.fill();
-          ctx.fillStyle = '#0f172a';
-          ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('🛡️ ANTI-LOSS', x, badgeY + 11);
-          ctx.restore();
+        ctx.save();
+        ctx.strokeStyle = line.color;
+        ctx.lineWidth = line.width;
+        if (line.dashed) {
+          ctx.setLineDash([4, 4]);
+        } else {
+          ctx.setLineDash([]);
         }
 
-        // Histórico de WIN / LOSS nas velas completas
-        if (cluster.result === 'WIN') {
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        // Nós de ancoragem nos pivôs (círculo azul vibrante com anel branco como nas imagens)
+        if (line.type === 'LTA' || line.type === 'LTB' || line.type === 'PULLBACK_MICRO') {
+          if (x1 >= 0 && x1 <= mainWidth) {
+            ctx.fillStyle = '#2688eb';
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(x1, y1, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+
+        // Rótulo ou badge de alerta para Nível Horizontal na régua lateral
+        if (line.type === 'HORIZONTAL_LEVEL' && line.alertPrice !== undefined) {
+          const alertY = getY(line.alertPrice);
+          if (alertY >= 10 && alertY <= mainHeight - 10) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(14, 165, 233, 0.9)';
+            ctx.beginPath();
+            ctx.roundRect(mainWidth - 84, alertY - 8, 80, 16, 3);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 9px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`🔔 ${line.alertPrice.toFixed(precision > 2 ? 4 : 2)}`, mainWidth - 44, alertY + 3.5);
+            ctx.restore();
+          }
+        }
+
+        ctx.restore();
+      });
+    }
+
+    // ─── 3.2. ETIQUETAS DE TOPO E FUNDO EXTREMOS (Pílulas cinzas estilo imagens) ─
+    if (showAutoLines && structure.extremes.length > 0) {
+      structure.extremes.forEach((ext) => {
+        if (ext.candleIndex >= startIdx && ext.candleIndex < endIdx) {
+          const x = getX(ext.candleIndex - startIdx);
+          const y = getY(ext.price);
+
           ctx.save();
-          const winY = isGreen ? lowY + (showFootprintClusters ? 46 : 24) : highY - (showFootprintClusters ? 46 : 24);
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.2)';
-          ctx.strokeStyle = '#10b981';
+          const pillW = 68;
+          const pillH = 16;
+          const pillX = x - pillW / 2;
+          const pillY = ext.type === 'TOP' ? y - pillH - 6 : y + 6;
+
+          // Caixa cinza translúcida com borda sutil
+          ctx.fillStyle = 'rgba(30, 41, 59, 0.88)';
+          ctx.strokeStyle = 'rgba(148, 163, 184, 0.5)';
           ctx.lineWidth = 1;
-          ctx.roundRect(x - 18, winY, 36, 14, 3);
+          ctx.beginPath();
+          ctx.roundRect(pillX, pillY, pillW, pillH, 4);
           ctx.fill();
           ctx.stroke();
 
-          ctx.fillStyle = '#34d399';
-          ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+          // Texto com a cotação exata
+          ctx.fillStyle = '#f1f5f9';
+          ctx.font = 'bold 9.5px "JetBrains Mono", monospace';
           ctx.textAlign = 'center';
-          ctx.fillText('WIN ✓', x, winY + 10.5);
+          ctx.fillText(ext.label, x, pillY + 11.5);
           ctx.restore();
         }
-      }
-    });
+      });
+    }
 
     // ─── 4. LINHA DA COTAÇÃO ATUAL ────────────────────────────────────────────
     if (currentPrice !== null) {
@@ -445,6 +450,80 @@ export function CandleChart({
       }
     }
 
+    // ─── 4.1. LINHA VERTICAL DE EXPIRAÇÃO & PURCHASE TIME (Fiel às Imagens) ───
+    const lastVisibleIdx = visibleCandles.length - 1;
+    const lastCandleX = getX(lastVisibleIdx);
+    const expirationX = lastCandleX + slotWidth;
+
+    if (expirationX >= 0 && expirationX <= mainWidth + 30) {
+      ctx.save();
+
+      // 1. Linha vertical tracejada branca de Purchase Time na vela ativa
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(lastCandleX, 18);
+      ctx.lineTo(lastCandleX, mainHeight);
+      ctx.stroke();
+
+      // Cabeçalho no topo da linha: PURCHASE TIME 00:XX
+      const timeRemainingStr = `00:${String(secondsRemaining).padStart(2, '0')}`;
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'bold 9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`PURCHASE TIME ${timeRemainingStr}`, lastCandleX, 14);
+
+      // Ícone / badge de relógio no rodapé da linha
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(lastCandleX - 16, mainHeight - 20, 32, 16, 4);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.fillText(`⏱`, lastCandleX, mainHeight - 8.5);
+
+      // 2. Linha vertical sólida vermelha de Expiração à frente da vela atual
+      ctx.setLineDash([]);
+      ctx.strokeStyle = 'rgba(224, 83, 56, 0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(expirationX, 0);
+      ctx.lineTo(expirationX, mainHeight);
+      ctx.stroke();
+
+      // Bandeira de expiração no topo da linha vermelha
+      ctx.fillStyle = '#e05338';
+      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.fillText('🏁', expirationX, 12);
+
+      // 3. Pílula/Cápsula 00:XX sobre a linha na altura da cotação atual
+      if (currentPrice !== null) {
+        const curY = getY(currentPrice);
+        if (curY >= 10 && curY <= mainHeight - 10) {
+          const capW = 46;
+          const capH = 18;
+          const capX = expirationX - capW / 2;
+          const capY = curY - capH / 2;
+
+          ctx.fillStyle = secondsRemaining <= 10 ? '#e05338' : '#0ecb81';
+          ctx.beginPath();
+          ctx.roundRect(capX, capY, capW, capH, 9);
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 10px "JetBrains Mono", monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(timeRemainingStr, expirationX, curY + 3.5);
+        }
+      }
+
+      ctx.restore();
+    }
+
     // ─── 5. RETÍCULA DO MOUSE (CROSSHAIR) ─────────────────────────────────────
     if (mousePos && mousePos.x <= mainWidth && mousePos.y <= mainHeight) {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
@@ -469,19 +548,20 @@ export function CandleChart({
     }
   }, [
     candles,
-    candleClusters,
     visibleCount,
     panOffset,
     mousePos,
     currentPrice,
     precision,
-    showFootprintClusters,
-    showStrategySignals,
+    showAutoLines,
+    lineFilter,
+    structure,
+    secondsRemaining,
   ]);
 
   return (
     <div className="bg-[#0a0d14] border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col">
-      {/* Header do Gráfico com Toggles do Indicador Gocharting */}
+      {/* Header do Gráfico com Controles de Linhas e Confluência */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-[#070a10] border-b border-slate-800">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-slate-800/60 border border-slate-700/80 flex items-center justify-center text-sky-400 font-bold font-mono text-sm">
@@ -498,46 +578,103 @@ export function CandleChart({
               <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-sky-950/60 text-sky-400 border border-sky-800/40">
                 OTC
               </span>
+              {/* Badge Dinâmico de Sincronização de Linhas / Nova Vela */}
+              <div
+                className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-950/70 border border-blue-500/40 text-blue-300 font-mono text-[10px] font-bold"
+                title="Pivôs e regiões estruturais atualizados dinamicamente a cada nova vela"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                <span>⚡ {structure.patternLabel}</span>
+                <span className="text-slate-400">({structure.regionsCount} regiões)</span>
+              </div>
             </div>
             <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1.5 mt-0.5">
-              <span className="text-sky-300 font-semibold">Gocharting Power Tick</span>
+              <span className="text-emerald-400 font-semibold">Gráfico em Tempo Real</span>
               <span>•</span>
-              <span className="text-emerald-400">Footprint Clusters</span>
+              <span className="text-slate-400">Stream Conectado</span>
+              {structure.currentInteraction.touchingLTA && (
+                <>
+                  <span>•</span>
+                  <span className="text-emerald-400 font-bold">Toque em LTA (Suporte)</span>
+                </>
+              )}
+              {structure.currentInteraction.touchingLTB && (
+                <>
+                  <span>•</span>
+                  <span className="text-rose-400 font-bold">Toque em LTB (Resistência)</span>
+                </>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Toggles do Indicador Gocharting & Controles */}
+        {/* Controles de Linhas e Ações Rápidas */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Toggle Footprint Clusters (Números das Velas) */}
+          {/* Botão de Ativação Linhas Auto ON/OFF */}
           <button
             type="button"
-            onClick={() => setShowFootprintClusters((prev) => !prev)}
+            id="btn-toggle-auto-lines"
+            onClick={() => setShowAutoLines((prev) => !prev)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono font-bold transition-all cursor-pointer ${
-              showFootprintClusters
-                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-sm'
-                : 'bg-slate-900 border-slate-700 text-slate-400'
+              showAutoLines
+                ? 'bg-blue-600/25 border-blue-400/80 text-blue-300 shadow-sm shadow-blue-500/20'
+                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200'
             }`}
-            title="Ligar ou desligar números de Footprint Cluster nas velas"
+            title="Ativar/Desativar marcação automática de Linhas LTA/LTB, canais e suportes"
           >
-            <Layers className="w-3.5 h-3.5" />
-            <span>FOOTPRINT CLUSTERS: {showFootprintClusters ? 'LIGADO' : 'DESLIGADO'}</span>
+            <TrendingUp className="w-3.5 h-3.5 text-blue-400" />
+            <span>LINHAS AUTO: {showAutoLines ? 'ON' : 'OFF'}</span>
           </button>
 
-          {/* Toggle Sinais & Filtros Anti-Loss */}
-          <button
-            type="button"
-            onClick={() => setShowStrategySignals((prev) => !prev)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono font-bold transition-all cursor-pointer ${
-              showStrategySignals
-                ? 'bg-sky-500/20 border-sky-500/40 text-sky-300 shadow-sm'
-                : 'bg-slate-900 border-slate-700 text-slate-400'
-            }`}
-            title="Ligar ou desligar sinais e marcadores de filtro anti-loss"
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>SINAIS &amp; FILTROS: {showStrategySignals ? 'LIGADO' : 'DESLIGADO'}</span>
-          </button>
+          {/* Filtros Rápidos de Linhas */}
+          {showAutoLines && (
+            <div className="hidden md:flex items-center gap-1 bg-slate-900/90 p-0.5 rounded-lg border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setLineFilter('ALL')}
+                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                  lineFilter === 'ALL'
+                    ? 'bg-blue-500 text-slate-950'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Todas
+              </button>
+              <button
+                type="button"
+                onClick={() => setLineFilter('TREND')}
+                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                  lineFilter === 'TREND'
+                    ? 'bg-blue-500 text-slate-950'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                LTA/LTB
+              </button>
+              <button
+                type="button"
+                onClick={() => setLineFilter('CHANNELS')}
+                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                  lineFilter === 'CHANNELS'
+                    ? 'bg-blue-500 text-slate-950'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Canais
+              </button>
+              <button
+                type="button"
+                onClick={() => setLineFilter('LEVELS')}
+                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                  lineFilter === 'LEVELS'
+                    ? 'bg-blue-500 text-slate-950'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Níveis
+              </button>
+            </div>
+          )}
 
           {/* Botão de Forçar Análise no Topo do Gráfico */}
           {onForceAnalysis && (
@@ -547,10 +684,10 @@ export function CandleChart({
               onClick={onForceAnalysis}
               disabled={isAnalyzing}
               className="flex items-center gap-1.5 px-3 py-1 rounded-lg border border-amber-400/80 bg-gradient-to-r from-amber-500/25 via-amber-400/20 to-sky-500/25 hover:from-amber-500/35 hover:to-sky-500/35 text-amber-300 text-xs font-mono font-black transition-all cursor-pointer shadow-md shadow-amber-500/10 active:scale-95 disabled:opacity-50"
-              title="Forçar o robô a escanear o contexto e gerar sinal imediato com a estratégia"
+              title="Forçar o robô a analisar confluência de LTA/LTB + Ticks para os 00s"
             >
               <Zap className={`w-3.5 h-3.5 text-amber-400 ${isAnalyzing ? 'animate-spin' : 'animate-pulse'}`} />
-              <span>{isAnalyzing ? 'ESCANEANDO CONTEXTO...' : 'FORÇAR ANÁLISE'}</span>
+              <span>{isAnalyzing ? 'ANALISANDO ESTRATÉGIA...' : 'FORÇAR ANÁLISE COM A ESTRATÉGIA'}</span>
             </button>
           )}
 
@@ -664,19 +801,17 @@ export function CandleChart({
         </div>
       </div>
 
-      {/* Footer Informativo Gocharting */}
+      {/* Footer Informativo Limpo */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 bg-[#070a10] border-t border-slate-800 text-xs font-mono text-slate-400">
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-slate-300 font-semibold">{symbol}</span>
+          <span className="text-slate-200 font-semibold">{symbol}</span>
           <span>•</span>
-          <span className="text-emerald-400 font-semibold">Números Verdes: Bullish Active</span>
+          <span className="text-emerald-400 font-semibold">Candlestick M1</span>
           <span>•</span>
-          <span className="text-rose-400 font-semibold">Números Vermelhos: Bearish Active</span>
-          <span>•</span>
-          <span className="text-amber-400 font-semibold">Filtros Anti-Loss Ativos</span>
+          <span className="text-sky-400">Cotação em Tempo Real</span>
         </div>
 
-        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+        <div className="flex items-center gap-2 text-[11px] text-slate-400">
           <span>Scroll: Zoom</span>
           <span>•</span>
           <span>Arrastar: Histórico</span>

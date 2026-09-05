@@ -218,50 +218,65 @@ export function speakVoiceNotification(
 
   try {
     window.speechSynthesis.cancel();
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
 
     const doSpeak = () => {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'pt-BR';
-      utterance.rate = 1.05;
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
 
-      utterance.onstart = () => {
-        options?.onStart?.();
-      };
-      utterance.onend = () => {
-        activeUtterance = null;
-        options?.onEnd?.();
-      };
-      utterance.onerror = () => {
-        activeUtterance = null;
-        options?.onEnd?.();
-      };
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'pt-BR';
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
 
-      const voices = window.speechSynthesis.getVoices();
-      const ptVoice = voices.find(
-        (v) =>
-          v.lang.toLowerCase().includes('pt-br') ||
-          v.lang.toLowerCase().includes('pt_br') ||
-          v.lang.toLowerCase().includes('pt')
-      );
-      if (ptVoice) {
-        utterance.voice = ptVoice;
+        utterance.onstart = () => {
+          options?.onStart?.();
+        };
+        utterance.onend = () => {
+          activeUtterance = null;
+          options?.onEnd?.();
+        };
+        utterance.onerror = () => {
+          activeUtterance = null;
+          options?.onEnd?.();
+        };
+
+        const voices = window.speechSynthesis.getVoices();
+        const ptVoice = voices.find(
+          (v) =>
+            v.lang.toLowerCase().includes('pt-br') ||
+            v.lang.toLowerCase().includes('pt_br') ||
+            v.lang.toLowerCase().includes('pt')
+        );
+        if (ptVoice) {
+          utterance.voice = ptVoice;
+        }
+
+        activeUtterance = utterance;
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.warn('Erro interno de síntese:', err);
+        options?.onEnd?.();
       }
-
-      activeUtterance = utterance;
-      window.speechSynthesis.speak(utterance);
     };
 
-    const initialVoices = window.speechSynthesis.getVoices();
-    if (initialVoices.length === 0 && window.speechSynthesis.onvoiceschanged !== undefined) {
-      window.speechSynthesis.onvoiceschanged = () => {
+    // Pequeno atraso para garantir liberação do cancel no motor do navegador
+    setTimeout(() => {
+      const initialVoices = window.speechSynthesis.getVoices();
+      if (initialVoices.length === 0 && window.speechSynthesis.onvoiceschanged !== undefined) {
+        window.speechSynthesis.onvoiceschanged = () => {
+          doSpeak();
+          window.speechSynthesis.onvoiceschanged = null;
+        };
+      } else {
         doSpeak();
-        window.speechSynthesis.onvoiceschanged = null;
-      };
-    } else {
-      doSpeak();
-    }
+      }
+    }, 40);
   } catch (err) {
     console.warn('Falha na síntese de voz:', err);
     options?.onEnd?.();
